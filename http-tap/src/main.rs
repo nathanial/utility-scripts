@@ -13,6 +13,7 @@ use std::io::BufReader;
 use rustls::{pki_types::CertificateDer, pki_types::PrivateKeyDer, ServerConfig};
 use tokio_rustls::TlsAcceptor;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use rcgen::{CertificateParams, Certificate, IsCa, KeyUsagePurpose, ExtendedKeyUsagePurpose};
 
 fn normalize_target(target: &str) -> (String, &'static str) {
     // Accept host:port or full http(s)://host[:port]
@@ -39,7 +40,9 @@ async fn main() -> Result<()> {
     let listen = cli.listen_addr()?;
     let (authority, scheme) = normalize_target(&cli.target);
 
-    let tls_acceptor = if cli.listen_tls_cert.is_some() || cli.listen_tls_key.is_some() {
+    let tls_acceptor = if cli.listen_self_signed {
+        Some(build_self_signed_acceptor()?)
+    } else if cli.listen_tls_cert.is_some() || cli.listen_tls_key.is_some() {
         Some(build_tls_acceptor(&cli)? )
     } else { None };
 
@@ -113,6 +116,30 @@ fn build_tls_acceptor(cli: &Cli) -> Result<TlsAcceptor> {
     let Some(key_der) = keys.into_iter().next() else {
         anyhow::bail!("no private keys found in {}", key_path.display());
     };
+
+    let server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs_der, key_der)?;
+
+    Ok(TlsAcceptor::from(std::sync::Arc::new(server_config)))
+}
+
+fn build_self_signed_acceptor() -> Result<TlsAcceptor> {
+    // SANs for typical local dev
+    let mut params = CertificateParams::new(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ]);
+    // Server usage
+    params.is_ca = IsCa::ExplicitNoCa;
+    params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+
+    let cert = Certificate::from_params(params)?;
+
+    let certs_der: Vec<CertificateDer> = vec![CertificateDer::from(cert.serialize_der()?)];
+    let key_der = PrivateKeyDer::Pkcs8(cert.serialize_private_key_der().into());
 
     let server_config = ServerConfig::builder()
         .with_no_client_auth()

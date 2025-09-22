@@ -25,6 +25,7 @@ Flags:
 HTTPS support:
 - Upstream HTTPS: supported automatically when `--target` is `https://…` (system trust store via rustls-native-certs).
 - You can bypass cert verification with `-k/--insecure-upstream` for local/dev certs.
+- HTTPS listen: either provide `--listen-tls-cert/--listen-tls-key` (PEM), or use `--listen-self-signed` to auto‑generate a dev cert/key in memory for `localhost`, `127.0.0.1`, and `::1`.
 
 WebSocket support:
 - WebSocket (Upgrade) and WSS upstream are supported transparently. Point your WS client at the `--listen` port and use the same path; the proxy forwards the 101 handshake and tunnels frames.
@@ -42,4 +43,15 @@ Notes:
 TUI example:
 ```
 us-http-tap --tui --listen 127.0.0.1:8888 --target http://127.0.0.1:8080
+```
+
+HTTPS listen examples:
+```
+# Auto self‑signed (dev):
+us-http-tap --listen 127.0.0.1:8443 --listen-self-signed --target 127.0.0.1:8080
+
+# Explicit cert/key files:
+us-http-tap --listen 127.0.0.1:8443 \
+  --listen-tls-cert ./localhost.crt --listen-tls-key ./localhost.key \
+  --target 127.0.0.1:8080
 ```

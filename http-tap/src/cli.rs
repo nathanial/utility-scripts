@@ -48,6 +48,10 @@ pub struct Cli {
     #[arg(long, short = 'k', default_value_t = false)]
     pub insecure_upstream: bool,
 
+    /// Generate and use an in-memory self-signed cert for HTTPS listening (dev only)
+    #[arg(long, default_value_t = false)]
+    pub listen_self_signed: bool,
+
     /// Run an interactive TUI that shows a live table of paths, method counts, and last-seen
     #[arg(long, default_value_t = false)]
     pub tui: bool,

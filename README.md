@@ -69,4 +69,7 @@ Happy scripting!
   us-http-tap --listen 127.0.0.1:8443 \
     --listen-tls-cert ./localhost.crt --listen-tls-key ./localhost.key \
     --target 127.0.0.1:8080
+
+  # Listen with auto self-signed (dev convenience)
+  us-http-tap --listen 127.0.0.1:8443 --listen-self-signed --target 127.0.0.1:8080
   ```
