@@ -20,6 +20,7 @@ Flags:
 - `--max-body-bytes <n>`: Max bytes of each body to print (default 2048).
 - `--redact-header name[,name]...`: Headers to redact.
 - `-k, --insecure-upstream`: Disable TLS certificate/hostname verification for upstream HTTPS (development only).
+- `--tui`: Launch a live table view with per-path method counts and recency (q to quit, c to clear).
 
 HTTPS support:
 - Upstream HTTPS: supported automatically when `--target` is `https://…` (system trust store via rustls-native-certs).
@@ -33,3 +34,8 @@ HTTPS support:
 Notes:
 - Full MITM for arbitrary remote hostnames (dynamic per-host certs) is out of scope.
 - Bodies are buffered to log/forward, so very large payloads may impact memory.
+
+TUI example:
+```
+us-http-tap --tui --listen 127.0.0.1:8888 --target http://127.0.0.1:8080
+```

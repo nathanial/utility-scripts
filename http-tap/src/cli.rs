@@ -47,6 +47,10 @@ pub struct Cli {
     /// Disable TLS certificate and hostname verification for upstream HTTPS
     #[arg(long, short = 'k', default_value_t = false)]
     pub insecure_upstream: bool,
+
+    /// Run an interactive TUI that shows a live table of paths, method counts, and last-seen
+    #[arg(long, default_value_t = false)]
+    pub tui: bool,
 }
 
 impl Cli {

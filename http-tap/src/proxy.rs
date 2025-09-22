@@ -13,6 +13,7 @@ use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use crate::stats::{StatsEvent, StatsSender};
 use rustls::{ClientConfig, SignatureScheme};
 use rustls::client::danger::{ServerCertVerified, ServerCertVerifier, HandshakeSignatureValid};
 
@@ -26,6 +27,7 @@ pub struct Config {
     pub redact_header: Vec<String>,
     pub tls: Option<TlsConfig>,
     pub insecure_upstream: bool,
+    pub stats: Option<StatsSender>,
 }
 
 #[derive(Clone)]
@@ -79,7 +81,7 @@ pub async fn run_proxy(cfg: Config) -> anyhow::Result<()> {
                     Ok(tls_stream) => {
                         let io = TokioIo::new(tls_stream);
                         let conn_id = state.next_conn_id();
-                        let svc = service_fn(move |req| handle(state.clone(), conn_id, addr, req));
+            let svc = service_fn(move |req| handle(state.clone(), conn_id, addr, req));
                         if let Err(err) = hyper::server::conn::http1::Builder::new()
                             .serve_connection(io, svc)
                             .await
@@ -155,6 +157,18 @@ async fn handle(
     copy_headers_forward(req_parts.headers, forwarded.headers_mut(), &state.cfg);
 
     log_request(&state.cfg, conn_id, &peer, &forwarded, &req_bytes, &now);
+    if let Some(tx) = &state.cfg.stats {
+        let path = req_parts
+            .uri
+            .path_and_query()
+            .map(|pq| pq.as_str().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        let _ = tx.send(StatsEvent {
+            method: req_parts.method.clone(),
+            path,
+            at: std::time::SystemTime::now(),
+        });
+    }
 
     let resp = match state.client.request(forwarded).await {
         Ok(r) => r,

@@ -1,10 +1,13 @@
 mod cli;
 mod proxy;
+mod stats;
+mod tui;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::Cli;
 use proxy::{run_proxy, Config, TlsConfig};
+use stats::channel as stats_channel;
 use std::fs::File;
 use std::io::BufReader;
 use rustls::{pki_types::CertificateDer, pki_types::PrivateKeyDer, ServerConfig};
@@ -40,6 +43,8 @@ async fn main() -> Result<()> {
         Some(build_tls_acceptor(&cli)? )
     } else { None };
 
+    let (stats_tx, stats_rx) = if cli.tui { let (tx, rx) = stats_channel(); (Some(tx), Some(rx)) } else { (None, None) };
+
     let cfg = Config {
         listen,
         target_authority: authority,
@@ -49,10 +54,20 @@ async fn main() -> Result<()> {
         redact_header: cli.redact_header,
         tls: tls_acceptor.map(|a| TlsConfig { acceptor: a }),
         insecure_upstream: cli.insecure_upstream,
+        stats: stats_tx,
     };
 
-    run_proxy(cfg).await?;
-    Ok(())
+    if let Some(rx) = stats_rx {
+        // Run proxy in background and TUI in foreground
+        let proxy_task = tokio::spawn(async move { let _ = run_proxy(cfg).await; });
+        tui::run_tui(rx).await?;
+        // TUI exited; proxy task ends when process exits
+        drop(proxy_task);
+        Ok(())
+    } else {
+        run_proxy(cfg).await?;
+        Ok(())
+    }
 }
 
 fn build_tls_acceptor(cli: &Cli) -> Result<TlsAcceptor> {
