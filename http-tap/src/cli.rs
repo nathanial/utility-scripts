@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{Parser, ValueHint};
@@ -34,6 +35,18 @@ pub struct Cli {
         String::from("set-cookie"),
     ])]
     pub redact_header: Vec<String>,
+
+    /// Enable TLS on the listening port using the provided cert (PEM) and key (PEM)
+    #[arg(long, value_hint = ValueHint::FilePath)]
+    pub listen_tls_cert: Option<PathBuf>,
+
+    /// Private key for --listen-tls-cert (PEM, RSA or ECDSA)
+    #[arg(long, value_hint = ValueHint::FilePath)]
+    pub listen_tls_key: Option<PathBuf>,
+
+    /// Disable TLS certificate and hostname verification for upstream HTTPS
+    #[arg(long, short = 'k', default_value_t = false)]
+    pub insecure_upstream: bool,
 }
 
 impl Cli {
@@ -42,4 +55,3 @@ impl Cli {
             .map_err(|e| anyhow::anyhow!("invalid --listen address '{}': {}", self.listen, e))
     }
 }
-

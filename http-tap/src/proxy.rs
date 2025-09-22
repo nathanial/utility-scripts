@@ -9,9 +9,12 @@ use hyper::body::Incoming;
 use hyper::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri};
 use hyper::service::service_fn;
 use hyper::Error as HyperError;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use rustls::{ClientConfig, SignatureScheme};
+use rustls::client::danger::{ServerCertVerified, ServerCertVerifier, HandshakeSignatureValid};
 
 #[derive(Clone)]
 pub struct Config {
@@ -21,6 +24,13 @@ pub struct Config {
     pub include_bodies: bool,
     pub max_body_bytes: usize,
     pub redact_header: Vec<String>,
+    pub tls: Option<TlsConfig>,
+    pub insecure_upstream: bool,
+}
+
+#[derive(Clone)]
+pub struct TlsConfig {
+    pub acceptor: tokio_rustls::TlsAcceptor,
 }
 
 pub async fn run_proxy(cfg: Config) -> anyhow::Result<()> {
@@ -29,9 +39,27 @@ pub async fn run_proxy(cfg: Config) -> anyhow::Result<()> {
         .with_context(|| format!("bind {}", cfg.listen))?;
 
     let client = {
-        let mut http = HttpConnector::new();
-        http.enforce_http(true); // HTTP only
-        Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(http)
+        let https = if cfg.insecure_upstream {
+            // Build a TLS client config that skips certificate verification.
+            let no_verify = Arc::new(NoVerifier);
+            let tls_cfg = ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(no_verify)
+                .with_no_client_auth();
+            HttpsConnectorBuilder::new()
+                .with_tls_config(tls_cfg)
+                .https_or_http()
+                .enable_http1()
+                .build()
+        } else {
+            HttpsConnectorBuilder::new()
+                .with_native_roots()
+                .expect("load platform certs")
+                .https_or_http()
+                .enable_http1()
+                .build()
+        };
+        Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(https)
     };
 
     let shared = Arc::new(ProxyState::new(cfg, client));
@@ -43,30 +71,52 @@ pub async fn run_proxy(cfg: Config) -> anyhow::Result<()> {
 
     loop {
         let (stream, addr) = listener.accept().await?;
-        let io = TokioIo::new(stream);
         let state = shared.clone();
-        tokio::spawn(async move {
-            let conn_id = state.next_conn_id();
-            let svc = service_fn(move |req| handle(state.clone(), conn_id, addr, req));
-            if let Err(err) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(io, svc)
-                .await
-            {
-                eprintln!("[conn#{conn_id}] connection error: {err}");
-            }
-        });
+        if let Some(tls) = &shared.cfg.tls {
+            let acceptor = tls.acceptor.clone();
+            tokio::spawn(async move {
+                match acceptor.accept(stream).await {
+                    Ok(tls_stream) => {
+                        let io = TokioIo::new(tls_stream);
+                        let conn_id = state.next_conn_id();
+                        let svc = service_fn(move |req| handle(state.clone(), conn_id, addr, req));
+                        if let Err(err) = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(io, svc)
+                            .await
+                        {
+                            eprintln!("[conn#{conn_id}] connection error: {err}");
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("TLS accept error from {}: {}", addr, err);
+                    }
+                }
+            });
+        } else {
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                let conn_id = state.next_conn_id();
+                let svc = service_fn(move |req| handle(state.clone(), conn_id, addr, req));
+                if let Err(err) = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(io, svc)
+                    .await
+                {
+                    eprintln!("[conn#{conn_id}] connection error: {err}");
+                }
+            });
+        }
     }
 }
 
 #[derive(Clone)]
 struct ProxyState {
     cfg: Config,
-    client: Client<HttpConnector, Full<Bytes>>,
+    client: Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
     conn_seq: Arc<AtomicU64>,
 }
 
 impl ProxyState {
-    fn new(cfg: Config, client: Client<HttpConnector, Full<Bytes>>) -> Self {
+    fn new(cfg: Config, client: Client<HttpsConnector<HttpConnector>, Full<Bytes>>) -> Self {
         Self {
             cfg,
             client,
@@ -250,4 +300,53 @@ fn print_body(prefix: &str, body: &Bytes, max: usize) {
 
 fn now_iso() -> String {
     OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_else(|_| "now".into())
+}
+
+#[derive(Debug)]
+struct NoVerifier;
+
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::ED25519,
+            SignatureScheme::ED448,
+        ]
+    }
 }

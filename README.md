@@ -54,8 +54,19 @@ Happy scripting!
 ## Included Commands (highlights)
 
 - `us-interactive-branch-delete`: TUI to review and delete merged/unmerged Git branches, sorted by age.
-- `us-http-tap`: Lightweight HTTP tap/proxy. Example:
+- `us-http-tap`: Lightweight HTTP(S) tap/proxy. Examples:
   ```bash
   us-http-tap --listen 127.0.0.1:8888 --target 127.0.0.1:8080 --include-bodies
   # Point your client at http://127.0.0.1:8888 to see requests/responses
+
+  # HTTPS upstream
+  us-http-tap --listen 127.0.0.1:8888 --target https://127.0.0.1:8443
+
+  # HTTPS upstream (insecure: skip cert verification)
+  us-http-tap --listen 127.0.0.1:8888 --target https://127.0.0.1:8443 -k
+
+  # Listen with TLS (dev cert)
+  us-http-tap --listen 127.0.0.1:8443 \
+    --listen-tls-cert ./localhost.crt --listen-tls-key ./localhost.key \
+    --target 127.0.0.1:8080
   ```
