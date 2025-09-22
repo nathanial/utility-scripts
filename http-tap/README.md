@@ -25,6 +25,10 @@ Flags:
 HTTPS support:
 - Upstream HTTPS: supported automatically when `--target` is `https://…` (system trust store via rustls-native-certs).
 - You can bypass cert verification with `-k/--insecure-upstream` for local/dev certs.
+
+WebSocket support:
+- WebSocket (Upgrade) and WSS upstream are supported transparently. Point your WS client at the `--listen` port and use the same path; the proxy forwards the 101 handshake and tunnels frames.
+- Current version tunnels frames without deep inspection. The TUI will show the initial GET upgrade under the path.
 - Listening with TLS: provide a dev cert and key and point clients to `https://localhost:<port>`:
   ```
   us-http-tap --listen 127.0.0.1:8443 --listen-tls-cert ./localhost.crt --listen-tls-key ./localhost.key --target 127.0.0.1:8080

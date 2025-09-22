@@ -8,12 +8,14 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri};
 use hyper::service::service_fn;
+use hyper::upgrade;
 use hyper::Error as HyperError;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use crate::stats::{StatsEvent, StatsSender};
+use tokio::io::{copy_bidirectional};
 use rustls::{ClientConfig, SignatureScheme};
 use rustls::client::danger::{ServerCertVerified, ServerCertVerifier, HandshakeSignatureValid};
 
@@ -137,6 +139,67 @@ async fn handle(
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, HyperError> {
     let now = now_iso();
+
+    // WebSocket upgrade path: tunnel bytes after 101 handshake
+    if is_websocket_upgrade(req.headers()) {
+        let mut fwd_headers = req.headers().clone();
+        copy_headers_forward(fwd_headers.clone(), &mut HeaderMap::new(), &state.cfg); // sanitize hop-by-hop via side-effect on temp map
+        // Rebuild forwarded request without body
+        let mut forwarded = Request::builder()
+            .method(req.method().clone())
+            .version(req.version())
+            .uri(remap_uri(&req.method(), req.uri(), &state.cfg))
+            .body(Full::new(Bytes::new()))
+            .expect("build ws request");
+        copy_headers_forward(req.headers().clone(), forwarded.headers_mut(), &state.cfg);
+
+        // Perform upstream handshake
+        let mut upstream_resp = match state.client.request(forwarded).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[conn#{conn_id}] {now} upstream WS handshake error: {e}");
+                return Ok(simple_response(StatusCode::BAD_GATEWAY, "upstream WS handshake failed"));
+            }
+        };
+
+        if upstream_resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+            eprintln!(
+                "[conn#{conn_id}] {now} upstream WS expected 101, got {}",
+                upstream_resp.status()
+            );
+            return Ok(simple_response(StatusCode::BAD_GATEWAY, "upstream did not switch protocols"));
+        }
+
+        // Build response to client with upstream headers
+        let upstream_headers = upstream_resp.headers().clone();
+        let mut client_resp_builder = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
+        {
+            let h = client_resp_builder.headers_mut().unwrap();
+            *h = upstream_headers;
+        }
+        let client_resp = client_resp_builder
+            .body(Full::new(Bytes::new()))
+            .expect("ws 101 resp");
+
+        // Spawn tunnel task after connection upgrades
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            let now = now_iso();
+            match (upgrade::on(req).await, upgrade::on(upstream_resp).await) {
+                (Ok(down), Ok(up)) => {
+                    let mut down = TokioIo::new(down);
+                    let mut up = TokioIo::new(up);
+                    let _ = copy_bidirectional(&mut down, &mut up).await;
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    eprintln!("[conn#{conn_id}] {now} WS upgrade tunnel error: {e}");
+                }
+            }
+            drop(state_clone);
+        });
+
+        return Ok(client_resp);
+    }
 
     let (req_parts, req_body_incoming) = req.into_parts();
     let req_bytes = match req_body_incoming.collect().await {
@@ -314,6 +377,23 @@ fn print_body(prefix: &str, body: &Bytes, max: usize) {
 
 fn now_iso() -> String {
     OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_else(|_| "now".into())
+}
+
+fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
+    let upgrade = headers
+        .get(hyper::http::header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false);
+    if !upgrade {
+        return false;
+    }
+    // Connection header may contain comma-separated tokens
+    headers
+        .get(hyper::http::header::CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').any(|t| t.trim().eq_ignore_ascii_case("upgrade")))
+        .unwrap_or(false)
 }
 
 #[derive(Debug)]

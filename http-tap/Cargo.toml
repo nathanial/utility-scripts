@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
-tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "signal", "io-util"] }
 hyper = { version = "1.4", features = ["http1", "server", "client"] }
 http-body-util = "0.1"
 http = "1"
