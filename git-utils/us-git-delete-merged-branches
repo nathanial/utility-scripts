@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: us-git-delete-merged-branches [options]
+
+Delete local Git branches that are fully merged into a base branch.
+
+Options:
+  -b, --base BRANCH   Base branch to compare against. Defaults to the
+                      remote HEAD (e.g. origin/main) if available, otherwise
+                      falls back to main or master.
+  -r, --remote NAME   Remote to inspect for the default base branch (default: origin).
+  -n, --dry-run       Show the branches that would be deleted without deleting them.
+  -y, --yes           Delete branches without interactive confirmation.
+      --help          Show this help message and exit.
+USAGE
+}
+
+base_branch=""
+remote_name="origin"
+dry_run=false
+assume_yes=false
+
+while (($#)); do
+  case "$1" in
+    -b|--base)
+      base_branch="$2"
+      shift 2
+      ;;
+    -r|--remote)
+      remote_name="$2"
+      shift 2
+      ;;
+    -n|--dry-run)
+      dry_run=true
+      shift
+      ;;
+    -y|--yes)
+      assume_yes=true
+      shift
+      ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      echo "Unexpected argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Error: this script must be run inside a Git repository." >&2
+  exit 1
+fi
+
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+resolve_default_base() {
+  local remote_ref="refs/remotes/${remote_name}/HEAD"
+  if git rev-parse --verify --quiet "$remote_ref" >/dev/null; then
+    git symbolic-ref --short "$remote_ref" | sed "s#^${remote_name}/##"
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/main; then
+    echo "main"
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/master; then
+    echo "master"
+    return 0
+  fi
+  echo "$current_branch"
+}
+
+if [[ -z "$base_branch" ]]; then
+  base_branch=$(resolve_default_base)
+fi
+
+if ! git show-ref --verify --quiet "refs/heads/${base_branch}"; then
+  echo "Error: base branch '${base_branch}' does not exist locally." >&2
+  exit 1
+fi
+
+mapfile -t merged_branches < <(
+  git branch --merged "$base_branch" |
+    sed 's/^\*\s*//;s/^\s*//'
+)
+
+declare -a deletable_branches=()
+
+for branch in "${merged_branches[@]}"; do
+  [[ -z "$branch" ]] && continue
+  if [[ "$branch" == "$base_branch" || "$branch" == "$current_branch" ]]; then
+    continue
+  fi
+  deletable_branches+=("$branch")
+done
+
+echo "Base branch: $base_branch"
+
+if ((${#deletable_branches[@]} == 0)); then
+  echo "No merged branches found to delete."
+  exit 0
+fi
+
+echo "The following branches are fully merged into '$base_branch':"
+for branch in "${deletable_branches[@]}"; do
+  echo "  $branch"
+done
+
+if $dry_run; then
+  echo "Dry-run mode: no branches were deleted."
+  exit 0
+fi
+
+if ! $assume_yes; then
+  read -r -p "Delete the listed branches? [y/N] " response
+  case "$response" in
+    [yY]|[yY][eE][sS]) ;;
+    *)
+      echo "Aborted; no branches deleted."
+      exit 0
+      ;;
+  esac
+fi
+
+for branch in "${deletable_branches[@]}"; do
+  if git branch -d "$branch"; then
+    echo "Deleted branch '$branch'."
+  else
+    echo "Skipping branch '$branch' (not fully merged?)" >&2
+  fi
+done
