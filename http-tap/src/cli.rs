@@ -1,0 +1,45 @@
+use std::net::SocketAddr;
+use std::str::FromStr;
+
+use clap::{Parser, ValueHint};
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    name = "http-tap",
+    about = "Listen on a port and proxy to a target, printing HTTP requests/responses.",
+    version,
+    propagate_version = true
+)]
+pub struct Cli {
+    /// Address to listen on (e.g., 127.0.0.1:8888)
+    #[arg(long, value_hint = ValueHint::Other, default_value = "127.0.0.1:8888")]
+    pub listen: String,
+
+    /// Target HTTP endpoint to forward to (host:port or full URL base)
+    #[arg(long, value_hint = ValueHint::Url, required = true)]
+    pub target: String,
+
+    /// Print request/response bodies (truncated by --max-body-bytes)
+    #[arg(long, default_value_t = false)]
+    pub include_bodies: bool,
+
+    /// Maximum number of body bytes to print per message
+    #[arg(long, default_value_t = 2048)]
+    pub max_body_bytes: usize,
+
+    /// Header names to redact in logs (repeatable)
+    #[arg(long, value_delimiter = ',', num_args = 0.., default_values_t = vec![
+        String::from("authorization"),
+        String::from("cookie"),
+        String::from("set-cookie"),
+    ])]
+    pub redact_header: Vec<String>,
+}
+
+impl Cli {
+    pub fn listen_addr(&self) -> anyhow::Result<SocketAddr> {
+        SocketAddr::from_str(&self.listen)
+            .map_err(|e| anyhow::anyhow!("invalid --listen address '{}': {}", self.listen, e))
+    }
+}
+

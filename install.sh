@@ -61,18 +61,23 @@ if [[ -z "$script_dir" || ! -d "$script_dir" ]]; then
   exit 1
 fi
 
-cargo_manifest="$script_dir/interactive-branch-delete/Cargo.toml"
-binary_name="us-interactive-branch-delete"
-release_binary="$script_dir/interactive-branch-delete/target/release/$binary_name"
+ibd_manifest="$script_dir/interactive-branch-delete/Cargo.toml"
+ibd_binary_name="us-interactive-branch-delete"
+ibd_release_binary="$script_dir/interactive-branch-delete/target/release/$ibd_binary_name"
+
+httap_manifest="$script_dir/http-tap/Cargo.toml"
+httap_binary_name="us-http-tap"
+httap_release_binary="$script_dir/http-tap/target/release/$httap_binary_name"
+
 bin_dir="$script_dir/bin"
 
 build_interactive_branch_delete() {
-  if [[ ! -f "$cargo_manifest" ]]; then
+  if [[ ! -f "$ibd_manifest" ]]; then
     return
   fi
 
   if $dry_run; then
-    echo "[dry-run] Would run: cargo build --release --manifest-path '$cargo_manifest'"
+    echo "[dry-run] Would run: cargo build --release --manifest-path '$ibd_manifest'"
     return
   fi
 
@@ -81,9 +86,30 @@ build_interactive_branch_delete() {
     return
   fi
 
-  echo "Building $binary_name (release)..."
-  if ! cargo build --release --manifest-path "$cargo_manifest"; then
+  echo "Building $ibd_binary_name (release)..."
+  if ! cargo build --release --manifest-path "$ibd_manifest"; then
     echo "Warning: cargo build failed; interactive-branch-delete binary may be stale." >&2
+  fi
+}
+
+build_http_tap() {
+  if [[ ! -f "$httap_manifest" ]]; then
+    return
+  fi
+
+  if $dry_run; then
+    echo "[dry-run] Would run: cargo build --release --manifest-path '$httap_manifest'"
+    return
+  fi
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "Warning: cargo not found; skipping http-tap build." >&2
+    return
+  fi
+
+  echo "Building $httap_binary_name (release)..."
+  if ! cargo build --release --manifest-path "$httap_manifest"; then
+    echo "Warning: cargo build failed; http-tap binary may be stale." >&2
   fi
 }
 
@@ -95,26 +121,45 @@ ensure_bin_dir() {
   fi
 }
 
-link_binary() {
-  if [[ ! -f "$cargo_manifest" ]]; then
+link_interactive_branch_delete() {
+  if [[ ! -f "$ibd_manifest" ]]; then
     return
   fi
 
   if $dry_run; then
-    echo "[dry-run] Would symlink $release_binary -> $bin_dir/$binary_name"
+    echo "[dry-run] Would symlink $ibd_release_binary -> $bin_dir/$ibd_binary_name"
     return
   fi
 
-  if [[ -x "$release_binary" ]]; then
-    ln -sf "$release_binary" "$bin_dir/$binary_name"
+  if [[ -x "$ibd_release_binary" ]]; then
+    ln -sf "$ibd_release_binary" "$bin_dir/$ibd_binary_name"
   else
-    echo "Warning: release binary not found at $release_binary; skipping symlink." >&2
+    echo "Warning: release binary not found at $ibd_release_binary; skipping symlink." >&2
+  fi
+}
+
+link_http_tap() {
+  if [[ ! -f "$httap_manifest" ]]; then
+    return
+  fi
+
+  if $dry_run; then
+    echo "[dry-run] Would symlink $httap_release_binary -> $bin_dir/$httap_binary_name"
+    return
+  fi
+
+  if [[ -x "$httap_release_binary" ]]; then
+    ln -sf "$httap_release_binary" "$bin_dir/$httap_binary_name"
+  else
+    echo "Warning: release binary not found at $httap_release_binary; skipping symlink." >&2
   fi
 }
 
 build_interactive_branch_delete
+build_http_tap
 ensure_bin_dir
-link_binary
+link_interactive_branch_delete
+link_http_tap
 
 entries=("$script_dir")
 while IFS= read -r -d '' dir; do

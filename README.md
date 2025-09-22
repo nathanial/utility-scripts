@@ -23,6 +23,7 @@ This repository collects small command-line helpers for macOS and Linux develope
    ```bash
    us-git-delete-merged-branches --help
    us-interactive-branch-delete --help
+   us-http-tap --help
    ```
 
 ## Manual PATH setup (alternative)
@@ -49,3 +50,12 @@ source ~/.zshrc
 - If you change shells or migrate machines, rerun `install.sh` (or copy your PATH block) so the scripts remain available.
 
 Happy scripting!
+
+## Included Commands (highlights)
+
+- `us-interactive-branch-delete`: TUI to review and delete merged/unmerged Git branches, sorted by age.
+- `us-http-tap`: Lightweight HTTP tap/proxy. Example:
+  ```bash
+  us-http-tap --listen 127.0.0.1:8888 --target 127.0.0.1:8080 --include-bodies
+  # Point your client at http://127.0.0.1:8888 to see requests/responses
+  ```
