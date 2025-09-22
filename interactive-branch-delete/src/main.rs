@@ -12,7 +12,7 @@ use crate::app::App;
 use crate::cli::Cli;
 use crate::delete::{DeleteStatus, delete_branches};
 use crate::git::{
-    collect_merged_branches, current_branch_name, ensure_local_branch, open_repository,
+    BranchInfo, collect_local_branches, current_branch_name, ensure_local_branch, open_repository,
     resolve_base_branch,
 };
 
@@ -41,7 +41,7 @@ fn run(cli: Cli) -> Result<()> {
 
     ensure_local_branch(&repo, &base_branch)?;
 
-    let mut merged = collect_merged_branches(&repo, &base_branch)?;
+    let mut merged = collect_local_branches(&repo, &base_branch)?;
     if let Ok(name) = &current_branch_result {
         merged.retain(|branch| branch.name != base_branch && branch.name != *name);
     } else {
@@ -50,7 +50,7 @@ fn run(cli: Cli) -> Result<()> {
 
     if merged.is_empty() {
         println!(
-            "No merged branches found relative to '{base_branch}' in {}.",
+            "No branches found relative to '{base_branch}' in {}.",
             repo.path().display()
         );
         return Ok(());
@@ -62,7 +62,9 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     let mut app = App::new(merged, base_branch.clone(), current_branch_display.clone());
-    app.set_message("Use space to toggle branches. Press enter to confirm deletion.");
+    app.set_message(
+        "Use space to toggle branches (green = merged, red = unmerged). Press enter to confirm.",
+    );
 
     tui::run(&mut app)?;
 
@@ -80,19 +82,26 @@ fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn print_branch_listing(
-    branches: &[crate::git::BranchInfo],
-    base_branch: &str,
-    current_branch: &str,
-) {
-    println!("Merged branches relative to '{base_branch}' (current: {current_branch}):");
+fn print_branch_listing(branches: &[BranchInfo], base_branch: &str, current_branch: &str) {
+    use std::time::SystemTime;
+
+    println!("Branches relative to '{base_branch}' (current: {current_branch}):");
+    let now = SystemTime::now();
     for branch in branches {
         let tip_id = branch.tip.to_string();
         let short = &tip_id[..tip_id.len().min(7)];
         let summary = branch.summary.as_deref().unwrap_or("<no commit message>");
+        let age = branch
+            .age(now)
+            .map(|duration| humantime::format_duration(duration).to_string())
+            .unwrap_or_else(|| "n/a".to_string());
+        let status = if branch.merged { "merged" } else { "unmerged" };
         match &branch.committer {
-            Some(committer) => println!("  {:<24} {}  {}", branch.name, short, committer),
-            None => println!("  {:<24} {}", branch.name, short),
+            Some(committer) => println!(
+                "  {:<24} {}  {:<10} {:<8} {}",
+                branch.name, short, status, age, committer
+            ),
+            None => println!("  {:<24} {}  {:<10} {:<8}", branch.name, short, status, age),
         }
         println!("      {summary}");
     }

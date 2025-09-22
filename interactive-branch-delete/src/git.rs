@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use git2::{BranchType, Oid, Repository};
@@ -9,6 +10,8 @@ pub struct BranchInfo {
     pub tip: Oid,
     pub summary: Option<String>,
     pub committer: Option<String>,
+    pub commit_timestamp: Option<i64>,
+    pub merged: bool,
 }
 
 pub fn open_repository(path: Option<&Path>) -> Result<Repository> {
@@ -69,7 +72,7 @@ pub fn ensure_local_branch(repo: &Repository, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn collect_merged_branches(repo: &Repository, base_branch: &str) -> Result<Vec<BranchInfo>> {
+pub fn collect_local_branches(repo: &Repository, base_branch: &str) -> Result<Vec<BranchInfo>> {
     let base_ref = repo
         .find_reference(&format!("refs/heads/{base_branch}"))
         .with_context(|| format!("Failed to find reference for base branch '{base_branch}'"))?;
@@ -94,10 +97,6 @@ pub fn collect_merged_branches(repo: &Repository, base_branch: &str) -> Result<V
             }
         };
 
-        if name == base_branch {
-            continue;
-        }
-
         let reference = branch.into_reference();
         let target = match reference.target() {
             Some(oid) => oid,
@@ -107,16 +106,29 @@ pub fn collect_merged_branches(repo: &Repository, base_branch: &str) -> Result<V
             .find_commit(target)
             .with_context(|| format!("Failed to resolve commit for branch '{name}'"))?;
 
-        if repo.graph_descendant_of(base_oid, commit.id())? {
-            merged.push(BranchInfo {
-                name,
-                tip: commit.id(),
-                summary: commit.summary().map(|s| s.trim().to_string()),
-                committer: commit.author().name().map(|s| s.to_string()),
-            });
-        }
+        let commit_time = commit.time();
+        let timestamp = commit_time.seconds() - i64::from(commit_time.offset_minutes()) * 60;
+
+        let merged_into_base = repo.graph_descendant_of(base_oid, commit.id())?;
+
+        merged.push(BranchInfo {
+            name,
+            tip: commit.id(),
+            summary: commit.summary().map(|s| s.trim().to_string()),
+            committer: commit.author().name().map(|s| s.to_string()),
+            commit_timestamp: (timestamp >= 0).then_some(timestamp),
+            merged: merged_into_base,
+        });
     }
 
     merged.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(merged)
+}
+
+impl BranchInfo {
+    pub fn age(&self, now: SystemTime) -> Option<Duration> {
+        let timestamp = self.commit_timestamp?;
+        let commit_time = UNIX_EPOCH.checked_add(Duration::from_secs(timestamp as u64))?;
+        now.duration_since(commit_time).ok()
+    }
 }

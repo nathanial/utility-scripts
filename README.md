@@ -9,7 +9,7 @@ This repository collects small command-line helpers for macOS and Linux develope
    git clone https://example.com/utility-scripts.git ~/utility-scripts
    cd ~/utility-scripts
    ```
-2. Run the installer to add the repository and its first-level folders to your shell `PATH` (defaults to `~/.zshrc`):
+2. Run the installer to add the repository and its first-level folders to your shell `PATH` (defaults to `~/.zshrc`). The script also builds the Rust CLI and symlinks the release binary into `bin/`:
    ```bash
    ./install.sh
    ```
@@ -22,6 +22,7 @@ This repository collects small command-line helpers for macOS and Linux develope
 4. Validate everything is wired up by running one of the scripts from anywhere:
    ```bash
    us-git-delete-merged-branches --help
+   us-interactive-branch-delete --help
    ```
 
 ## Manual PATH setup (alternative)

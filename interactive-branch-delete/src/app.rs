@@ -1,15 +1,21 @@
+use std::cmp::Ordering;
+use std::time::{Duration, SystemTime};
+
 use crate::git::BranchInfo;
 
 pub struct BranchItem {
     pub info: BranchInfo,
     pub selected: bool,
+    pub age: Option<Duration>,
 }
 
 impl BranchItem {
-    fn new(info: BranchInfo) -> Self {
+    fn new(info: BranchInfo, now: SystemTime) -> Self {
+        let age = info.age(now);
         Self {
             info,
             selected: false,
+            age,
         }
     }
 }
@@ -26,8 +32,21 @@ pub struct App {
 
 impl App {
     pub fn new(branches: Vec<BranchInfo>, base_branch: String, current_branch: String) -> Self {
+        let now = SystemTime::now();
+        let mut items: Vec<BranchItem> = branches
+            .into_iter()
+            .map(|info| BranchItem::new(info, now))
+            .collect();
+
+        items.sort_by(|a, b| match (&a.age, &b.age) {
+            (Some(a_age), Some(b_age)) => b_age.cmp(a_age),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.info.name.cmp(&b.info.name),
+        });
+
         Self {
-            branches: branches.into_iter().map(BranchItem::new).collect(),
+            branches: items,
             cursor: 0,
             should_quit: false,
             confirmed: false,

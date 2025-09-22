@@ -1,3 +1,4 @@
+use humantime::format_duration;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
@@ -26,24 +27,43 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         .iter()
         .map(|branch| {
             let marker = if branch.selected { "[x]" } else { "[ ]" };
+            let status_span = if branch.info.merged {
+                Span::styled("merged", Style::default().fg(Color::Green))
+            } else {
+                Span::styled("unmerged", Style::default().fg(Color::Red))
+            };
+            let age_span = branch.age.map(|age| {
+                Span::styled(
+                    format_duration(age).to_string(),
+                    Style::default().fg(Color::Magenta),
+                )
+            });
             let summary = branch
                 .info
                 .summary
                 .as_deref()
                 .unwrap_or("<no commit message>");
-            let primary = Line::from(vec![
+            let mut spans = vec![
                 Span::styled(marker, Style::default().fg(Color::Cyan)),
                 Span::raw(" "),
                 Span::styled(&branch.info.name, Style::default().fg(Color::Yellow)),
                 Span::raw("  "),
-                Span::raw(summary),
-            ]);
+                status_span,
+            ];
+            if let Some(age_span) = age_span {
+                spans.push(Span::raw("  "));
+                spans.push(age_span);
+            }
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(summary));
+
+            let primary = Line::from(spans);
             ListItem::new(primary)
         })
         .collect();
 
     let title = format!(
-        "Merged into '{}' (current: {}) - {} / {} selected",
+        "Branches relative to '{}' (current: {}) - {} / {} selected",
         app.base_branch(),
         app.current_branch(),
         app.selected_count(),

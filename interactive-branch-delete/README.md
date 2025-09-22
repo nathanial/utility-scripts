@@ -1,9 +1,9 @@
 # Interactive Branch Delete
 
-Rust-based CLI that provides a TUI for reviewing merged Git branches, selecting the ones you want, and deleting them in a single action.
+Rust-based CLI that provides a TUI for reviewing Git branches (merged or not), selecting the ones you want, and deleting them in a single action.
 
 ## Status
-- ✅ Ratatui-powered selector with keyboard controls and confirmation flow.
+- ✅ Ratatui-powered selector with keyboard controls, branch ages, and merged/unmerged status.
 - ✅ Safe deletion pipeline with dry-run mode and result summary.
 - ✅ Installed via `install.sh` as the `us-interactive-branch-delete` binary.
 - ⏳ Enhancements like branch filtering and protected rules.
@@ -21,6 +21,8 @@ us-interactive-branch-delete \
   --base main \
   --remote origin
 ```
+
+Branches are sorted by last commit age (oldest first). Merged branches display in green, while unmerged branches remain highlighted in red so you can make deliberate choices before deleting.
 
 Or run directly from source during development:
 ```bash
