@@ -96,15 +96,14 @@ if ! git show-ref --verify --quiet "refs/heads/${base_branch}"; then
   exit 1
 fi
 
-mapfile -t merged_branches < <(
-  git branch --merged "$base_branch" |
-    sed 's/^\*\s*//;s/^\s*//'
-)
+merged_branches=()
+while IFS= read -r branch; do
+  [[ -z "$branch" ]] && continue
+  merged_branches+=("$branch")
+done < <(git for-each-ref --format='%(refname:short)' --merged "$base_branch" refs/heads)
 
 declare -a deletable_branches=()
-
 for branch in "${merged_branches[@]}"; do
-  [[ -z "$branch" ]] && continue
   if [[ "$branch" == "$base_branch" || "$branch" == "$current_branch" ]]; then
     continue
   fi
