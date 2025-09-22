@@ -72,4 +72,11 @@ Happy scripting!
 
   # Listen with auto self-signed (dev convenience)
   us-http-tap --listen 127.0.0.1:8443 --listen-self-signed --target 127.0.0.1:8080
+
+  # Upstream mTLS + custom CA + SNI override
+  us-http-tap --listen 127.0.0.1:8888 \
+    --target https://10.0.0.5:8443 \
+    --upstream-server-name api.local --upstream-host api.local:8443 \
+    --upstream-ca ./ca.pem \
+    --upstream-client-cert ./client.crt --upstream-client-key ./client.key
   ```

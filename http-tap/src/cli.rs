@@ -55,6 +55,26 @@ pub struct Cli {
     /// Run an interactive TUI that shows a live table of paths, method counts, and last-seen
     #[arg(long, default_value_t = false)]
     pub tui: bool,
+
+    /// Extra CA bundle(s) for upstream TLS verification (PEM). Comma-separated or repeatable.
+    #[arg(long, value_hint = ValueHint::FilePath, value_delimiter = ',', num_args = 0..)]
+    pub upstream_ca: Vec<PathBuf>,
+
+    /// Upstream client certificate (PEM) for mTLS
+    #[arg(long, value_hint = ValueHint::FilePath)]
+    pub upstream_client_cert: Option<PathBuf>,
+
+    /// Upstream client private key (PEM) for mTLS
+    #[arg(long, value_hint = ValueHint::FilePath)]
+    pub upstream_client_key: Option<PathBuf>,
+
+    /// Override SNI/hostname for upstream TLS (useful when targeting an IP)
+    #[arg(long)]
+    pub upstream_server_name: Option<String>,
+
+    /// Override the Host header sent to the upstream (virtual host routing)
+    #[arg(long)]
+    pub upstream_host: Option<String>,
 }
 
 impl Cli {

@@ -406,6 +406,7 @@ dependencies = [
  "ratatui",
  "rcgen",
  "rustls",
+ "rustls-native-certs",
  "rustls-pemfile",
  "time",
  "tokio",

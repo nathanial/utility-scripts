@@ -21,6 +21,11 @@ Flags:
 - `--redact-header name[,name]...`: Headers to redact.
 - `-k, --insecure-upstream`: Disable TLS certificate/hostname verification for upstream HTTPS (development only).
 - `--tui`: Launch a live table view with per-path method counts and recency (q to quit, c to clear).
+- Upstream TLS options:
+  - `--upstream-ca <file[,file]>`: Extra CA bundle(s) for verifying upstream HTTPS/WSS.
+  - `--upstream-client-cert <file>` and `--upstream-client-key <file>`: Client cert/key (PEM) for mTLS.
+  - `--upstream-server-name <name>`: Override SNI/hostname when targeting an IP.
+  - `--upstream-host <name[:port]>`: Override the Host header sent to upstream (virtual host routing).
 
 HTTPS support:
 - Upstream HTTPS: supported automatically when `--target` is `https://…` (system trust store via rustls-native-certs).

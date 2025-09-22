@@ -58,6 +58,11 @@ async fn main() -> Result<()> {
         tls: tls_acceptor.map(|a| TlsConfig { acceptor: a }),
         insecure_upstream: cli.insecure_upstream,
         stats: stats_tx,
+        upstream_ca: cli.upstream_ca,
+        upstream_client_cert: cli.upstream_client_cert,
+        upstream_client_key: cli.upstream_client_key,
+        upstream_server_name: cli.upstream_server_name,
+        upstream_host: cli.upstream_host,
     };
 
     if let Some(rx) = stats_rx {

@@ -12,12 +12,17 @@ use hyper::upgrade;
 use hyper::Error as HyperError;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_rustls::FixedServerNameResolver;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use crate::stats::{StatsEvent, StatsSender};
-use tokio::io::{copy_bidirectional};
 use rustls::{ClientConfig, SignatureScheme};
 use rustls::client::danger::{ServerCertVerified, ServerCertVerifier, HandshakeSignatureValid};
+use rustls_native_certs::load_native_certs;
+use rustls::{RootCertStore, pki_types::CertificateDer, pki_types::PrivateKeyDer, pki_types::ServerName};
+use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use tokio::io::copy_bidirectional;
+// (imports deduped above)
 
 #[derive(Clone)]
 pub struct Config {
@@ -30,6 +35,11 @@ pub struct Config {
     pub tls: Option<TlsConfig>,
     pub insecure_upstream: bool,
     pub stats: Option<StatsSender>,
+    pub upstream_ca: Vec<std::path::PathBuf>,
+    pub upstream_client_cert: Option<std::path::PathBuf>,
+    pub upstream_client_key: Option<std::path::PathBuf>,
+    pub upstream_server_name: Option<String>,
+    pub upstream_host: Option<String>,
 }
 
 #[derive(Clone)]
@@ -43,26 +53,7 @@ pub async fn run_proxy(cfg: Config) -> anyhow::Result<()> {
         .with_context(|| format!("bind {}", cfg.listen))?;
 
     let client = {
-        let https = if cfg.insecure_upstream {
-            // Build a TLS client config that skips certificate verification.
-            let no_verify = Arc::new(NoVerifier);
-            let tls_cfg = ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(no_verify)
-                .with_no_client_auth();
-            HttpsConnectorBuilder::new()
-                .with_tls_config(tls_cfg)
-                .https_or_http()
-                .enable_http1()
-                .build()
-        } else {
-            HttpsConnectorBuilder::new()
-                .with_native_roots()
-                .expect("load platform certs")
-                .https_or_http()
-                .enable_http1()
-                .build()
-        };
+        let https = build_https_connector(&cfg)?;
         Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(https)
     };
 
@@ -299,10 +290,14 @@ fn copy_headers_forward(mut in_headers: HeaderMap, out_headers: &mut HeaderMap, 
         in_headers.remove(*name);
     }
 
-    // Overwrite Host to target authority
+    // Overwrite Host to target authority, unless explicitly overridden
+    let host_value = cfg
+        .upstream_host
+        .as_deref()
+        .unwrap_or(&cfg.target_authority);
     in_headers.insert(
         "host",
-        HeaderValue::from_str(&cfg.target_authority).unwrap_or(HeaderValue::from_static("localhost")),
+        HeaderValue::from_str(host_value).unwrap_or(HeaderValue::from_static("localhost")),
     );
 
     *out_headers = in_headers;
@@ -442,5 +437,106 @@ impl ServerCertVerifier for NoVerifier {
             SignatureScheme::ED25519,
             SignatureScheme::ED448,
         ]
+    }
+}
+
+fn build_https_connector(cfg: &Config) -> anyhow::Result<HttpsConnector<HttpConnector>> {
+    if cfg.insecure_upstream {
+        let no_verify = Arc::new(NoVerifier);
+        let tls_cfg = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(no_verify)
+            .with_no_client_auth();
+        let mut b = HttpsConnectorBuilder::new().with_tls_config(tls_cfg).https_or_http();
+        if let Some(name) = &cfg.upstream_server_name {
+            let sn = ServerName::try_from(name.clone())?;
+            b = b.with_server_name_resolver(FixedServerNameResolver::new(sn));
+        }
+        Ok(b.enable_http1().build())
+    } else {
+        // Build root store from native + optional extra CAs
+        let mut roots = RootCertStore::empty();
+        let native = load_native_certs();
+        for cert in native.certs {
+            let _ = roots.add(cert);
+        }
+        // Load extra CAs
+        for path in &cfg.upstream_ca {
+            if let Ok(file) = std::fs::File::open(path) {
+                let mut reader = std::io::BufReader::new(file);
+                for c in certs(&mut reader) {
+                    match c {
+                        Ok(der) => {
+                            let _ = roots.add(CertificateDer::from(der));
+                        }
+                        Err(_) => {}
+                    }
+                }
+            } else {
+                eprintln!("Warning: unable to open upstream CA file: {}", path.display());
+            }
+        }
+
+        let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+        let tls_cfg = if let (Some(cert_path), Some(key_path)) = (&cfg.upstream_client_cert, &cfg.upstream_client_key) {
+            // Load client cert chain
+            let chain: Vec<CertificateDer<'static>> = match std::fs::File::open(cert_path) {
+                Ok(f) => {
+                    let mut r = std::io::BufReader::new(f);
+                    certs(&mut r)
+                        .filter_map(|c| c.ok())
+                        .map(|d| CertificateDer::from(d))
+                        .collect()
+                }
+                Err(_) => Vec::new(),
+            };
+            // Load client key
+            let key_der: Option<PrivateKeyDer<'static>> = match std::fs::File::open(key_path) {
+                Ok(f) => {
+                    let mut r = std::io::BufReader::new(f);
+                    let mut keys: Vec<PrivateKeyDer> = pkcs8_private_keys(&mut r)
+                        .filter_map(|k| k.ok())
+                        .map(PrivateKeyDer::from)
+                        .collect();
+                    if keys.is_empty() {
+                        if let Ok(f2) = std::fs::File::open(key_path) {
+                            let mut r2 = std::io::BufReader::new(f2);
+                            keys = rsa_private_keys(&mut r2)
+                                .filter_map(|k| k.ok())
+                                .map(PrivateKeyDer::from)
+                                .collect();
+                        }
+                    }
+                    keys.into_iter().next()
+                }
+                Err(_) => None,
+            };
+            if !chain.is_empty() {
+                if let Some(k) = key_der {
+                    match builder.clone().with_client_auth_cert(chain, k) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            eprintln!("Warning: invalid client cert/key for upstream mTLS: {}", e);
+                            builder.clone().with_no_client_auth()
+                        }
+                    }
+                } else {
+                    eprintln!("Warning: upstream client key not found or invalid; proceeding without client auth");
+                    builder.clone().with_no_client_auth()
+                }
+            } else {
+                eprintln!("Warning: upstream client cert chain empty; proceeding without client auth");
+                builder.clone().with_no_client_auth()
+            }
+        } else {
+            builder.with_no_client_auth()
+        };
+
+        let mut b = HttpsConnectorBuilder::new().with_tls_config(tls_cfg).https_or_http();
+        if let Some(name) = &cfg.upstream_server_name {
+            let sn = ServerName::try_from(name.clone())?;
+            b = b.with_server_name_resolver(FixedServerNameResolver::new(sn));
+        }
+        Ok(b.enable_http1().build())
     }
 }
