@@ -2,26 +2,36 @@
 
 This repository collects small command-line helpers for macOS and Linux developers. Scripts are stored in subdirectories grouped by topic (for example, `git-utils/`).
 
-## Installing on macOS
+## Quick install on macOS
 
 1. Clone or download this repository to a location you control, for example:
    ```bash
    git clone https://example.com/utility-scripts.git ~/utility-scripts
+   cd ~/utility-scripts
    ```
-2. Add the utility script folders to your `PATH` so every script is runnable from any terminal session. Add the following to your shell profile (`~/.zshrc`, `~/.bash_profile`, etc.):
+2. Run the installer to add the repository and its first-level folders to your shell `PATH` (defaults to `~/.zshrc`):
    ```bash
-   export UTILITY_SCRIPTS_HOME="$HOME/utility-scripts"
-   export PATH="$UTILITY_SCRIPTS_HOME/git-utils:$PATH"
+   ./install.sh
    ```
-   After editing the profile, reload it (for `zsh` run `source ~/.zshrc`). Add additional subdirectories as you create them.
-3. Make sure scripts are executable (they already ship that way, but confirm after syncing):
+   - Pass `--profile` to target an alternate shell profile (for example `./install.sh --profile ~/.bash_profile`).
+   - Use `--dry-run` to preview the PATH block before writing it, or `--force` to refresh an existing installation block.
+3. Reload your shell profile so the PATH changes take effect:
    ```bash
-   chmod +x "$UTILITY_SCRIPTS_HOME"/**
+   source ~/.zshrc
    ```
 4. Validate everything is wired up by running one of the scripts from anywhere:
    ```bash
    us-git-delete-merged-branches --help
    ```
+
+## Manual PATH setup (alternative)
+
+If you prefer to manage your PATH entries yourself, add something similar to your profile file:
+```bash
+export UTILITY_SCRIPTS_HOME="$HOME/utility-scripts"
+export PATH="$UTILITY_SCRIPTS_HOME/git-utils:$PATH"
+```
+Add additional subdirectories as you create them, then reload your profile (`source ~/.zshrc`) for changes to take effect.
 
 ## Updating
 
@@ -35,6 +45,6 @@ source ~/.zshrc
 ## macOS Notes
 
 - Scripts stick to tools bundled with macOS whenever possible; any extra dependencies are documented alongside the relevant script.
-- If you change shells or migrate machines, copy the `UTILITY_SCRIPTS_HOME` block into the new profile so the scripts remain on your `PATH`.
+- If you change shells or migrate machines, rerun `install.sh` (or copy your PATH block) so the scripts remain available.
 
 Happy scripting!
