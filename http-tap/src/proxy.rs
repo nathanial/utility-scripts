@@ -59,9 +59,14 @@ pub async fn run_proxy(cfg: Config) -> anyhow::Result<()> {
 
     let shared = Arc::new(ProxyState::new(cfg, client));
 
+    let listen_scheme = if shared.cfg.tls.is_some() { "https" } else { "http" };
+    let upstream_scheme = shared.cfg.target_scheme;
     eprintln!(
-        "us-http-tap listening on http://{} → http://{}",
-        shared.cfg.listen, shared.cfg.target_authority
+        "us-http-tap listening on {}://{} → {}://{}",
+        listen_scheme,
+        shared.cfg.listen,
+        upstream_scheme,
+        shared.cfg.target_authority
     );
 
     loop {
