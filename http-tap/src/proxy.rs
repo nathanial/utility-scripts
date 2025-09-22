@@ -138,8 +138,32 @@ async fn handle(
 
     // WebSocket upgrade path: tunnel bytes after 101 handshake
     if is_websocket_upgrade(req.headers()) {
-        let mut fwd_headers = req.headers().clone();
-        copy_headers_forward(fwd_headers.clone(), &mut HeaderMap::new(), &state.cfg); // sanitize hop-by-hop via side-effect on temp map
+        // Preserve required WS hop-by-hop headers for the upstream handshake.
+        let conn_hdr = req
+            .headers()
+            .get(hyper::http::header::CONNECTION)
+            .cloned();
+        let upgr_hdr = req
+            .headers()
+            .get(hyper::http::header::UPGRADE)
+            .cloned();
+        let ws_key = req
+            .headers()
+            .get("sec-websocket-key")
+            .cloned();
+        let ws_ver = req
+            .headers()
+            .get("sec-websocket-version")
+            .cloned();
+        let ws_proto = req
+            .headers()
+            .get("sec-websocket-protocol")
+            .cloned();
+        let ws_ext = req
+            .headers()
+            .get("sec-websocket-extensions")
+            .cloned();
+
         // Rebuild forwarded request without body
         let mut forwarded = Request::builder()
             .method(req.method().clone())
@@ -148,6 +172,12 @@ async fn handle(
             .body(Full::new(Bytes::new()))
             .expect("build ws request");
         copy_headers_forward(req.headers().clone(), forwarded.headers_mut(), &state.cfg);
+        if let Some(v) = conn_hdr { forwarded.headers_mut().insert(hyper::http::header::CONNECTION, v); }
+        if let Some(v) = upgr_hdr { forwarded.headers_mut().insert(hyper::http::header::UPGRADE, v); }
+        if let Some(v) = ws_key { forwarded.headers_mut().insert("sec-websocket-key", v); }
+        if let Some(v) = ws_ver { forwarded.headers_mut().insert("sec-websocket-version", v); }
+        if let Some(v) = ws_proto { forwarded.headers_mut().insert("sec-websocket-protocol", v); }
+        if let Some(v) = ws_ext { forwarded.headers_mut().insert("sec-websocket-extensions", v); }
 
         // Perform upstream handshake
         let mut upstream_resp = match state.client.request(forwarded).await {
