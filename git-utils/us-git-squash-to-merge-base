@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: us-git-squash-to-merge-base [options]
+
+Squash a branch to a single commit based on the merge-base with a base branch
+(defaults to the repository's default branch). This rewrites history.
+
+Options:
+  -b, --base BRANCH    Base branch to compare against. If omitted, resolves to
+                       the remote HEAD (e.g., origin/main) or falls back to
+                       main/master.
+  -t, --target BRANCH  Branch to squash. Defaults to the current branch.
+  -e, --edit           Open editor to edit the commit message (uses old HEAD as template).
+  -n, --dry-run        Show the planned actions without making changes.
+  -f, --force          Proceed even if the working tree or index is dirty.
+      --help           Show this help message and exit.
+
+Examples:
+  # From the feature branch, squash into one commit against default base
+  us-git-squash-to-merge-base
+
+  # Squash a specific branch against 'main' and edit the message
+  us-git-squash-to-merge-base -t feature/foo -b main --edit
+
+Notes:
+  - This rewrites the branch. You will likely need to force-push:
+      git push --force-with-lease
+USAGE
+}
+
+base_branch=""
+target_branch=""
+edit_msg=false
+dry_run=false
+force=false
+remote_name="origin"
+
+while (($#)); do
+  case "$1" in
+    -b|--base)
+      base_branch="$2"; shift 2 ;;
+    -t|--target)
+      target_branch="$2"; shift 2 ;;
+    -e|--edit)
+      edit_msg=true; shift ;;
+    -n|--dry-run)
+      dry_run=true; shift ;;
+    -f|--force)
+      force=true; shift ;;
+    --help)
+      usage; exit 0 ;;
+    --)
+      shift; break ;;
+    -*)
+      echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *)
+      echo "Unexpected argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Error: this script must be run inside a Git repository." >&2
+  exit 1
+fi
+
+current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+
+resolve_default_base() {
+  local remote_ref="refs/remotes/${remote_name}/HEAD"
+  if git rev-parse --verify --quiet "$remote_ref" >/dev/null; then
+    git symbolic-ref --short "$remote_ref" | sed "s#^${remote_name}/##"
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/main; then
+    echo "main"; return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/master; then
+    echo "master"; return 0
+  fi
+  echo "$current_branch"
+}
+
+if [[ -z "$base_branch" ]]; then
+  base_branch=$(resolve_default_base)
+fi
+
+if [[ -z "$target_branch" ]]; then
+  if [[ "$current_branch" == "HEAD" ]]; then
+    echo "Error: detached HEAD; specify --target BRANCH." >&2
+    exit 1
+  fi
+  target_branch="$current_branch"
+fi
+
+if ! git show-ref --verify --quiet "refs/heads/${target_branch}"; then
+  echo "Error: target branch '${target_branch}' does not exist locally." >&2
+  exit 1
+fi
+
+if ! git show-ref --verify --quiet "refs/heads/${base_branch}"; then
+  echo "Error: base branch '${base_branch}' does not exist locally." >&2
+  exit 1
+fi
+
+if [[ "$target_branch" == "$base_branch" ]]; then
+  echo "Error: target and base branches are the same ('${target_branch}')." >&2
+  exit 1
+fi
+
+ensure_clean_tree() {
+  $force && return 0
+  # Refresh index timestamps and check for modifications
+  git update-index -q --refresh || true
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    cat >&2 <<ERR
+Error: working tree or index has changes.
+Commit/stash them or pass --force to proceed anyway.
+ERR
+    exit 1
+  fi
+}
+
+ensure_clean_tree
+
+# Switch to target branch if not already there
+if [[ "$current_branch" != "$target_branch" ]]; then
+  if $dry_run; then
+    echo "[dry-run] Would checkout '$target_branch'"
+  else
+    git checkout "$target_branch" >/dev/null
+  fi
+fi
+
+old_head=$(git rev-parse "$target_branch")
+merge_base=$(git merge-base "$base_branch" "$target_branch")
+
+if [[ -z "$merge_base" ]]; then
+  echo "Error: could not determine merge-base between '$base_branch' and '$target_branch'." >&2
+  exit 1
+fi
+
+ahead_count=$(git rev-list --count "$merge_base..$target_branch")
+if (( ahead_count == 0 )); then
+  echo "Nothing to squash: '$target_branch' has no commits ahead of '$base_branch'."
+  exit 0
+fi
+
+echo "Base branch:   $base_branch"
+echo "Target branch: $target_branch"
+echo "Merge-base:    $merge_base"
+echo "Commits ahead: $ahead_count"
+
+if $dry_run; then
+  echo "[dry-run] Would run: git reset --soft $merge_base"
+  if $edit_msg; then
+    echo "[dry-run] Would run: git commit -c $old_head"
+  else
+    echo "[dry-run] Would run: git commit -C $old_head"
+  fi
+  echo "[dry-run] Note: you will likely need to force-push (with lease)."
+  exit 0
+fi
+
+# Perform soft reset to the merge-base, staging the diff from merge-base..old_head
+git reset --soft "$merge_base"
+
+# Create a single commit; reuse or edit the old HEAD's message
+if $edit_msg; then
+  git commit -c "$old_head"
+else
+  git commit -C "$old_head"
+fi
+
+new_head=$(git rev-parse --short HEAD)
+echo "Squashed '$target_branch' to a single commit at $new_head."
+echo "If pushing a remote branch, run: git push --force-with-lease"
+
